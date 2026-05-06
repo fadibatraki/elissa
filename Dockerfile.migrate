@@ -1,0 +1,39 @@
+# Dockerfile.migrate
+# Temporary container for running Prisma migrations and admin setup
+# This container is NOT read-only and can write to the database
+#
+# Usage:
+#   docker build -f Dockerfile.migrate -t prisma-migrate .
+#
+#   # Run migrations
+#   docker run --rm --network your_network -e DATABASE_URL="..." prisma-migrate
+#
+#   # Create admin user (requires app to be running)
+#   docker run --rm --network your_network \
+#     -e APP_URL="http://app:3000" \
+#     -e ADMIN_EMAIL="admin@example.com" \
+#     -e ADMIN_PASSWORD="YourSecurePassword123!" \
+#     prisma-migrate node /app/scripts/create-admin.mjs
+
+FROM node:20-alpine
+
+# Install OpenSSL for Prisma
+RUN apk add --no-cache openssl
+
+WORKDIR /app
+
+# Copy only the files needed for Prisma migrations and admin setup
+COPY package.json package-lock.json ./
+COPY prisma ./prisma/
+COPY scripts ./scripts/
+
+# Install dependencies (Prisma only - admin script uses fetch)
+RUN npm ci --only=production && \
+    npm install prisma @prisma/client
+
+# Generate Prisma client
+RUN npx prisma generate
+
+# Default command: run migrations
+# Can be overridden with different commands
+CMD ["npx", "prisma", "migrate", "deploy"]

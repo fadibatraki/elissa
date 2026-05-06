@@ -1,0 +1,89 @@
+# SECURE docker-compose configuration
+# Copy this to docker-compose.yml and create a .env file with your secrets
+
+services:
+  postgres:
+    image: postgres:alpine
+    container_name: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "127.0.0.1:5432:5432"  # Only bind to localhost
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Security: Limit resources
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  app:
+    build: .
+    container_name: ecommerce
+    ports:
+      - "127.0.0.1:3000:3000"  # Only bind to localhost (Caddy will proxy)
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL}
+      - NODE_ENV=production
+    depends_on:
+      postgres:
+        condition: service_started
+    # No volumes needed - file uploads are disabled
+    restart: unless-stopped
+    command: sh -c "npm run prisma:migrate:deploy && npm start"
+    # Security: Run as non-root user (apps user created in Dockerfile)
+    user: "1001:1001"
+    # Security: Limit resources to prevent crypto mining
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+    # Security: Read-only filesystem (file uploads disabled)
+    read_only: true
+    # Tmpfs for directories that need to be writable
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+    # Security: Drop all capabilities
+    cap_drop:
+      - ALL
+    # Security: No new privileges
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    container_name: caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    # Security: Limit resources
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+volumes:
+  # app_uploads removed - file uploads are disabled
+  postgres_data:
+  caddy_data:
+  caddy_config:
